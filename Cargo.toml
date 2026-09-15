@@ -1,0 +1,17 @@
+[package]
+name = "flow-runner"
+version = "0.1.0"
+edition = "2021"
+description = "An embeddable, deterministic, sans-I/O workflow engine — flows are step graphs whose expressions are temple-dsl templates"
+license = "MIT"
+authors = ["Sahil Sinha <sahilsinha.dar@gmail.com>"]
+repository = "https://github.com/sinha-sahil/flow-runner"
+readme = "README.md"
+keywords = ["workflow", "orchestration", "state-machine", "sans-io", "template"]
+categories = ["data-structures", "template-engine"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+temple-dsl = "0.3"
+
+[dev-dependencies]
