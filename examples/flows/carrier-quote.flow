@@ -1,0 +1,32 @@
+edition 2026
+
+@label = 'Carrier quote'
+flow carrier-quote
+entry quote
+
+@label = 'Try this carrier first'
+param primary = 'delhivery'
+@label = 'Fall back to'
+param fallback = 'bluedart'
+
+node quote =
+  ask carrier.rates({ "carrier": primary, "pincode": input.data.pincode,
+                      "weightGrams": input.data.weightGrams })
+    -> priced(primary)
+
+node priced(carrier) = when {
+  input.failure != null && carrier != fallback: retryWith(fallback)
+  input.failure != null:                        unavailable('CARRIER_DOWN')
+  input.result.serviceable:                     quoted(carrier, input.result.fee, input.result.etaDays)
+  else:                                         unavailable('NOT_SERVICEABLE')
+}
+
+node retryWith(carrier) =
+  ask carrier.rates({ "carrier": carrier, "pincode": input.data.pincode,
+                      "weightGrams": input.data.weightGrams })
+    -> priced(carrier)
+
+node quoted(carrier, fee, etaDays) =
+  { "serviceable": true, "carrier": {{ carrier }}, "fee": {{ fee }}, "etaDays": {{ etaDays }} }
+
+node unavailable(reason) = { "serviceable": false, "reason": {{ reason }} }

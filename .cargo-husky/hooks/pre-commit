@@ -1,0 +1,16 @@
+#!/bin/sh
+# Copied into .git/hooks by the first `cargo test`. Runs the lint half of CI,
+# so formatting and clippy problems don't wait for a pull request.
+set -e
+
+echo "▶ cargo fmt --all -- --check"
+cargo fmt --all -- --check || {
+    echo "✗ Run 'cargo fmt --all', then commit again." >&2
+    exit 1
+}
+
+echo "▶ cargo clippy --all-targets --all-features -- -D warnings"
+cargo clippy --all-targets --all-features -- -D warnings || {
+    echo "✗ Fix clippy's warnings, then commit again." >&2
+    exit 1
+}

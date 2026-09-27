@@ -1,0 +1,55 @@
+edition 2026
+
+@label = 'Return eligibility'
+@desc  = 'Decides, for each order line, whether the customer may send it back.'
+flow return-eligibility
+entry evaluate
+
+@label = 'Return window (days)'
+@range = [7, 90]                       # a hint for the merchant UI; the engine ignores it
+param windowDays = 30
+
+@label = 'Discount codes that block returns'
+param restricted = ['FINALSALE', 'CLEARANCE']
+
+let reasons = ['Damaged', 'WrongItem', 'NotAsDescribed', 'ChangedMind']
+
+# units of a line still open to return
+let open(line) = (line.fulfilledQuantity
+  - input.data.claimedLines.filter(c -> c.lineId == line.lineId).map(c -> c.quantity).sum())
+
+@label = 'Evaluate the order'
+node evaluate =
+  let order   = input.data.order
+  let expired = input.data.evaluatedAt - order.deliveredAt > windowDays * 86400
+  let blocked = order.discountCodes.any(c -> restricted.contains(c))
+  when {
+    blocked: refuse('NotReturnable')
+    expired: refuse('WindowExpired')
+    else: {
+      "lines": {{ order.lines.map(line -> let n = open(line) in {
+        "lineId": line.lineId,
+        "actions": { "Return": {
+          "available":         n > 0,
+          "eligibleQuantity":  n,
+          "unavailableReason": null,
+          "applicableReasons": reasons,
+          "exchangeOption":    null
+        } }
+      }) }}
+    }
+  }
+
+@label = 'Refuse every line'
+node refuse(reason) = {
+  "lines": {{ input.data.order.lines.map(line -> {
+    "lineId": line.lineId,
+    "actions": { "Return": {
+      "available":         false,
+      "eligibleQuantity":  0,
+      "unavailableReason": reason,
+      "applicableReasons": [],
+      "exchangeOption":    null
+    } }
+  }) }}
+}

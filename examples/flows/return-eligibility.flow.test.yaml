@@ -1,0 +1,46 @@
+# Tests for return-eligibility.flow. Run with: flow test examples/flows
+tests:
+  - name: counts what is still open on each line
+    steps:
+      - entry: evaluate
+        data:
+          evaluatedAt: 1774166400
+          claimedLines: [{ lineId: L1, quantity: 1 }]
+          order:
+            deliveredAt: 1772870400          # 15 days earlier
+            discountCodes: [SALE20]
+            lines: [{ lineId: L1, fulfilledQuantity: 3 }, { lineId: L2, fulfilledQuantity: 1 }]
+        expect:
+          node: evaluate
+          value:
+            lines:
+              - { lineId: L1, actions: { Return: { available: true, eligibleQuantity: 2, unavailableReason: null } } }
+              - { lineId: L2, actions: { Return: { available: true, eligibleQuantity: 1 } } }
+
+  - name: a blocked discount code refuses every line
+    steps:
+      - entry: evaluate
+        data:
+          evaluatedAt: 1774166400
+          claimedLines: []
+          order: { deliveredAt: 1773907200, discountCodes: [FINALSALE], lines: [{ lineId: L1, fulfilledQuantity: 1 }] }
+        expect:
+          node: refuse
+          value: { lines: [{ actions: { Return: { available: false, unavailableReason: NotReturnable } } }] }
+
+  - name: the window is a param the host can widen
+    params: { windowDays: 45 }
+    steps:
+      - entry: evaluate
+        data:
+          evaluatedAt: 1774166400
+          claimedLines: []
+          order: { deliveredAt: 1771488000, discountCodes: [], lines: [{ lineId: L1, fulfilledQuantity: 1 }] }   # 31 days
+        expect:
+          value: { lines: [{ actions: { Return: { available: true } } }] }
+
+  - name: missing order data is an error, not a wrong answer
+    steps:
+      - entry: evaluate
+        data: { evaluatedAt: 1774166400, claimedLines: [] }
+        expect: { error: order }

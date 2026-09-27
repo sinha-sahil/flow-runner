@@ -1,0 +1,48 @@
+tests:
+  - name: approve, receive, inspect, refund, close
+    answers:
+      warehouse.inspect: { result: { passed: true, acceptedValue: 1200 } }
+    steps:
+      - entry: requested
+        data: { evaluatedAt: 1774166400, returnId: R-1 }
+        expect: { node: requested, value: { status: INITIATED }, wakeAt: null }
+      - event: approve
+        expect: { node: awaitingParcel, value: { status: INPROGRESS }, wakeAt: 1774771200 }
+      - event: tick
+        expect: { node: awaitingParcel, value: { flag: STALLED } }
+      - event: parcel.received
+        payload: { lines: [{ lineId: L1, qty: 1 }] }
+        expect: { node: refunding, value: { do: [{ type: refund, amount: 1200 }] } }
+      - event: refund.settled
+        expect: { node: closed, value: { status: CLOSED, reason: Refunded } }
+      - event: reopen
+        expect: { node: requested, value: { status: INITIATED } }
+
+  - name: the stall reminder follows the param
+    params: { stallAfterDays: 2 }
+    steps:
+      - entry: requested
+        data: { evaluatedAt: 1774166400, returnId: R-2 }
+      - event: approve
+        expect: { wakeAt: 1774339200 }
+
+  - name: a failed inspection goes to a person
+    steps:
+      - entry: requested
+        data: { evaluatedAt: 1774166400, returnId: R-3 }
+      - event: approve
+      - event: parcel.received
+        payload: { lines: [] }
+        expect: { ask: warehouse.inspect, node: inspected, payload: { returnId: R-3, lines: [] } }
+      - failure: timeout
+        expect: { node: manualReview, value: { flag: NEEDS_REVIEW, note: The inspection service failed } }
+      - event: approve
+        payload: { amount: 900 }
+        expect: { node: refunding, value: { do: [{ amount: 900 }] } }
+
+  - name: events that don't apply are ignored
+    steps:
+      - entry: requested
+        data: { evaluatedAt: 1774166400, returnId: R-4 }
+      - event: refund.settled
+        expect: { ignored: true }

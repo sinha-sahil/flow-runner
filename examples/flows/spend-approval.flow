@@ -1,0 +1,59 @@
+edition 2026
+
+@label = 'Spend approval'
+flow spend-approval
+entry submitted
+events approve, reject, withdraw
+
+@label = 'Approve automatically below'
+param autoBelow = 5000
+@label = 'Send to finance above'
+param financeAbove = 50000
+@label = 'Finance approvals needed'
+param quorum = 2
+@label = 'Escalate after (days)'
+param slaDays = 3
+
+let tier(amount) = when {
+  amount < autoBelow:       'auto'
+  amount <= financeAbove:   'manager'
+  else:                     'finance'
+}
+let dueAt(from, days) = from + days * 86400
+
+@desc = 'The host resolves risk.score by running another flow.'
+node submitted =
+  ask risk.score({ "vendor": input.data.vendor, "amount": input.data.amount })
+    -> routed()
+
+node routed =
+  let amount = input.data.amount
+  when {
+    input.failure != null:     pending(tier(amount), [], 'Risk check unavailable')
+    input.result.score >= 80:  rejected('High-risk vendor')
+    tier(amount) == 'auto':    approved([])
+    else:                      pending(tier(amount), [], null)
+  }
+
+@label = 'Waiting for approvers'
+node pending(level, approvals, note) =
+  let needed = level == 'finance' ? quorum : 1
+  let tally  = (input.event == 'approve'
+                  ? approvals.concat([input.payload.approverId]).unique()
+                  : approvals)
+  when {
+    input.event == 'reject':                            rejected(input.payload.reason)
+    input.event == 'withdraw':                          withdrawn()
+    input.event == 'approve' && tally.len() >= needed:  approved(tally)
+    input.event == 'approve':                           pending(level, tally, note)
+    input.event == 'tick':    { "status": "PENDING", "level": {{ level }}, "escalated": true }
+                                wake dueAt(input.data.evaluatedAt, slaDays)
+    input.arrived:            { "status": "PENDING", "level": {{ level }},
+                                "approvals": {{ approvals }}, "note"?: {{ note }} }
+                                wake dueAt(input.data.evaluatedAt, slaDays)
+    else: ignore
+  }
+
+node approved(approvers) = { "status": "APPROVED", "approvers": {{ approvers }} }
+node rejected(reason)    = { "status": "REJECTED", "reason": {{ reason }} }
+node withdrawn           = { "status": "WITHDRAWN" }

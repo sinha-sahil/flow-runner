@@ -1,0 +1,11 @@
+#!/bin/sh
+# Copied into .git/hooks by the first `cargo test`. Lints the message the way
+# CI lints a pull request's commits.
+case "$(head -n1 "$1")" in
+    Merge\ * | fixup!* | squash!* | amend!*) exit 0 ;;
+esac
+
+bash scripts/ci/lint_commit_msg.sh "$1" || {
+    echo "✗ See CONTRIBUTING.md#commits, then commit again." >&2
+    exit 1
+}

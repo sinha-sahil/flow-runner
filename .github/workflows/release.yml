@@ -1,0 +1,106 @@
+name: Release
+
+on:
+  push:
+    branches: [release]
+
+# a release half published by one run must not race the next
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+  CARGO_HUSKY_DONT_INSTALL_HOOKS: "1"
+
+jobs:
+  plan:
+    name: Work out the next version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.next.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: next
+        run: |
+          last_tag=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)
+          # trusted publishing needs the crate to exist already
+          if [ -z "$last_tag" ]; then
+            echo "::notice::No v* tag yet. The first release is done by hand, see CONTRIBUTING.md."
+            exit 0
+          fi
+          subjects=$(git log --format=%s "$last_tag..HEAD")
+          if [ -z "$subjects" ]; then
+            echo "Nothing to release: no commits since $last_tag"
+            exit 0
+          fi
+          current=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n1)
+          read -r version bump <<<"$(scripts/ci/next_version.sh "$current" <<<"$subjects")"
+          echo "Releasing $version, a $bump release after $last_tag"
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+
+  release:
+    name: Test, publish and tag
+    needs: plan
+    if: needs.plan.outputs.version != ''
+    runs-on: ubuntu-latest
+    environment: publish
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set the version and date the changelog
+        run: |
+          awk -v version="$VERSION" '!done && /^version = / { print "version = \"" version "\""; done = 1; next } { print }' \
+            Cargo.toml >Cargo.toml.new
+          mv Cargo.toml.new Cargo.toml
+          scripts/ci/changelog.sh stamp "$VERSION" "$(date -u +%F)"
+          scripts/ci/changelog.sh notes "$VERSION" >"$RUNNER_TEMP/notes.md"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: cargo test --all-features
+      - run: cargo test
+
+      - name: Commit and tag the release
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Cargo.toml Cargo.lock CHANGELOG.md
+          git commit -m "chore: release $VERSION" \
+            -m "- release: set the version to $VERSION and date its changelog section"
+          git tag "v$VERSION"
+
+      # trusted publishing: a short-lived token, nothing stored to leak or expire
+      - name: Authenticate with crates.io
+        id: crates-io
+        uses: rust-lang/crates-io-auth-action@v1
+
+      - name: Publish to crates.io
+        run: cargo publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates-io.outputs.token }}
+
+      - name: Push the release commit and tag
+        run: git push origin HEAD:release "v$VERSION"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.VERSION }}
+          name: v${{ env.VERSION }}
+          body_path: ${{ runner.temp }}/notes.md
+          generate_release_notes: true

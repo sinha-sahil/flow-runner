@@ -1,0 +1,69 @@
+edition 2026
+
+@label = 'Return lifecycle'
+flow return-lifecycle
+entry requested
+events approve, reject, cancel, parcel.received, refund.settled, acknowledge, reopen
+
+@label = 'Flag a stalled parcel after (days)'
+param stallAfterDays = 7
+
+let dueAt(from, days) = from + days * 86400
+
+@label = 'Requested'
+node requested = when {
+  input.event == 'approve': awaitingParcel(input.data.evaluatedAt)
+  input.event == 'reject':  rejected(input.payload?.note ?? 'No reason given')
+  input.event == 'cancel':  closed('Cancelled by the customer')
+  input.arrived:            { "status": "INITIATED" }
+  else: ignore
+}
+
+@label = 'Waiting for the parcel'
+node awaitingParcel(approvedAt) = when {
+  input.event == 'parcel.received': inspecting(input.payload.lines)
+  input.event == 'tick':            { "status": "INPROGRESS", "flag": "STALLED" }
+  input.arrived:                    { "status": "INPROGRESS" }
+                                      wake dueAt(approvedAt, stallAfterDays)
+  else: ignore
+}
+
+@label = 'Inspecting'
+node inspecting(lines) =
+  ask warehouse.inspect({ "returnId": input.data.returnId, "lines": lines })
+    -> inspected()
+
+node inspected = when {
+  input.failure != null: manualReview('The inspection service failed')
+  input.result.passed:   refunding(input.result.acceptedValue)
+  else:                  rejected(input.result.note)
+}
+
+@label = 'Needs a person'
+node manualReview(note) = when {
+  input.event == 'approve': refunding(input.payload.amount)
+  input.event == 'reject':  rejected(input.payload?.note ?? note)
+  input.arrived:            { "status": "INPROGRESS", "flag": "NEEDS_REVIEW", "note": {{ note }} }
+  else: ignore
+}
+
+@label = 'Refunding'
+node refunding(amount) = when {
+  input.event == 'refund.settled': closed('Refunded')
+  input.arrived: { "status": "INPROGRESS", "do": [ { "type": "refund", "amount": {{ amount }} } ] }
+  else: ignore
+}
+
+@label = 'Rejected'
+node rejected(note) = when {
+  input.event == 'acknowledge': closed('Rejected')
+  input.arrived:                { "status": "REJECTED", "note": {{ note }} }
+  else: ignore
+}
+
+@label = 'Closed'
+node closed(reason) = when {
+  input.event == 'reopen': requested()          # a cycle, allowed: both of its jumps need an event
+  input.arrived:           { "status": "CLOSED", "reason": {{ reason }} }
+  else: ignore
+}

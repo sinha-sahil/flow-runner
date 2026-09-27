@@ -1,0 +1,35 @@
+tests:
+  - name: the primary carrier quotes
+    steps:
+      - entry: quote
+        data: { pincode: '560001', weightGrams: 900 }
+        expect: { ask: carrier.rates, payload: { carrier: delhivery, pincode: '560001' } }
+      - result: { serviceable: true, fee: 80, etaDays: 2 }
+        expect: { node: quoted, value: { serviceable: true, carrier: delhivery, fee: 80, etaDays: 2 } }
+
+  - name: a failure falls back to the second carrier once
+    answers:
+      carrier.rates:
+        - failure: timeout
+        - result: { serviceable: true, fee: 120, etaDays: 3 }
+    steps:
+      - entry: quote
+        data: { pincode: '560001', weightGrams: 900 }
+        expect: { node: quoted, value: { carrier: bluedart, fee: 120 } }
+
+  - name: both carriers down
+    answers:
+      carrier.rates: { failure: timeout }
+    steps:
+      - entry: quote
+        data: { pincode: '560001', weightGrams: 900 }
+        expect: { node: unavailable, value: { serviceable: false, reason: CARRIER_DOWN } }
+
+  - name: the carriers are params
+    params: { primary: ecom, fallback: xpress }
+    answers:
+      carrier.rates: [{ failure: down }, { result: { serviceable: false } }]
+    steps:
+      - entry: quote
+        data: { pincode: '110001', weightGrams: 300 }
+        expect: { node: unavailable, value: { reason: NOT_SERVICEABLE } }

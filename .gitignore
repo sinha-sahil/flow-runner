@@ -1,3 +1,17 @@
+# Build output
 /target
-**/*.rs.bk
+
+# Cargo.lock is tracked: CI, the release build and `cargo install --locked`
+# all use the same dependency versions.
+
+# Editors and operating systems
+.idea/
+.vscode/
+*.swp
+*~
 .DS_Store
+Thumbs.db
+
+# Backups
+**/*.rs.bk
+*.orig

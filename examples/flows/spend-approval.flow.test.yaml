@@ -1,0 +1,43 @@
+tests:
+  - name: small amounts approve themselves
+    answers:
+      risk.score: { result: { score: 10 } }
+    steps:
+      - entry: submitted
+        data: { vendor: acme, amount: 1200, evaluatedAt: 1774166400 }
+        expect: { node: approved, value: { status: APPROVED, approvers: [] } }
+
+  - name: finance needs a quorum of two different people
+    answers:
+      risk.score: { result: { score: 20 } }
+    steps:
+      - entry: submitted
+        data: { vendor: acme, amount: 90000, evaluatedAt: 1774166400 }
+        expect: { node: pending, value: { status: PENDING, level: finance, approvals: [] }, wakeAt: 1774425600 }
+      - event: approve
+        payload: { approverId: a1 }
+        expect: { node: pending, value: { approvals: [a1] } }
+      - event: approve
+        payload: { approverId: a1 }          # the same person again doesn't count twice
+        expect: { node: pending, value: { approvals: [a1] } }
+      - event: approve
+        payload: { approverId: b2 }
+        expect: { node: approved, value: { approvers: [a1, b2] } }
+
+  - name: a risky vendor is rejected before anyone looks
+    answers:
+      risk.score: { result: { score: 95 } }
+    steps:
+      - entry: submitted
+        data: { vendor: shady, amount: 100, evaluatedAt: 1774166400 }
+        expect: { node: rejected, value: { reason: High-risk vendor } }
+
+  - name: when the risk check is down, a person decides
+    answers:
+      risk.score: { failure: unavailable }
+    steps:
+      - entry: submitted
+        data: { vendor: acme, amount: 100, evaluatedAt: 1774166400 }
+        expect: { node: pending, value: { level: auto, note: Risk check unavailable } }
+      - event: withdraw
+        expect: { node: withdrawn, value: { status: WITHDRAWN } }
